@@ -3,7 +3,6 @@
     using System;
     using System.Text.Json.Serialization;
     using System.Threading.Tasks;
-    using WatsonWebserver.Core;
 
     /// <summary>
     /// S3 server settings.
@@ -52,22 +51,6 @@
         }
 
         /// <summary>
-        /// Webserver settings.
-        /// </summary>
-        public WebserverSettings Webserver
-        {
-            get
-            {
-                return _Webserver;
-            }
-            set
-            {
-                if (value == null) throw new ArgumentNullException(nameof(Webserver));
-                _Webserver = value;
-            }
-        }
-
-        /// <summary>
         /// Callback method to use prior to examining requests for AWS S3 APIs.
         /// Return true if you wish to terminate the request, otherwise, return false, which will further route the request.
         /// </summary>
@@ -96,7 +79,6 @@
         #region Private-Members
 
         private LoggingSettings _Logging = new LoggingSettings();
-        private WebserverSettings _Webserver = new WebserverSettings("localhost", 8000, false);
         private OperationLimitsSettings _Limits = new OperationLimitsSettings();
 
         #endregion

@@ -9,10 +9,6 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Test.Server", "Test.Server\
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Test.Client", "Test.Client\Test.Client.csproj", "{BA7280BA-5E29-4DAE-9354-1C8E912C923F}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Test.RequestStyle", "Test.RequestStyle\Test.RequestStyle.csproj", "{1D56B740-5843-4F84-BFC9-E1C3A9E80BC3}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Test.SignatureValidation", "Test.SignatureValidation\Test.SignatureValidation.csproj", "{5AA253D9-4723-4948-9E39-F06E98181547}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -31,14 +27,6 @@ Global
 		{BA7280BA-5E29-4DAE-9354-1C8E912C923F}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{BA7280BA-5E29-4DAE-9354-1C8E912C923F}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{BA7280BA-5E29-4DAE-9354-1C8E912C923F}.Release|Any CPU.Build.0 = Release|Any CPU
-		{1D56B740-5843-4F84-BFC9-E1C3A9E80BC3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{1D56B740-5843-4F84-BFC9-E1C3A9E80BC3}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{1D56B740-5843-4F84-BFC9-E1C3A9E80BC3}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{1D56B740-5843-4F84-BFC9-E1C3A9E80BC3}.Release|Any CPU.Build.0 = Release|Any CPU
-		{5AA253D9-4723-4948-9E39-F06E98181547}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{5AA253D9-4723-4948-9E39-F06E98181547}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{5AA253D9-4723-4948-9E39-F06E98181547}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{5AA253D9-4723-4948-9E39-F06E98181547}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

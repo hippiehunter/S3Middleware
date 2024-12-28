@@ -1,4 +1,8 @@
-﻿namespace S3ServerLibrary
+﻿using System.Buffers;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Extensions;
+
+namespace S3ServerLibrary
 {
     using PrettyId;
     using System;
@@ -8,7 +12,6 @@
     using System.Text.Json.Serialization;
     using System.Text.RegularExpressions;
     using System.Threading.Tasks;
-    using WatsonWebserver.Core;
 
     /// <summary>
     /// S3 request.
@@ -198,7 +201,7 @@
         {
             get
             {
-                if (_HttpRequest != null) return _HttpRequest.ContentLength;
+                if (_HttpRequest != null) return _HttpRequest.Body.Length;
                 return 0;
             }
         }
@@ -455,30 +458,22 @@
         /// </summary>
         [JsonIgnore]
         public Stream Data { get; private set; } = null;
-
+        
         /// <summary>
-        /// Data stream as a string.  Fully reads the data stream.
+        /// DONT USE THIS PROPERTY.  its a oneshot read of the data stream.  Use ReadChunk() instead.
         /// </summary>
-        [JsonIgnore]
         public string DataAsString
         {
             get
             {
-                if (_HttpRequest != null) return _HttpRequest.DataAsString;
-                return null;
-            }
-        }
+                if (Data == null) return null;
+                if (Data.Length < 1) return null;
 
-        /// <summary>
-        /// Data stream as a byte array.  Fully reads the data stream.
-        /// </summary>
-        [JsonIgnore]
-        public byte[] DataAsBytes
-        {
-            get
-            {
-                if (_HttpRequest != null) return _HttpRequest.DataAsBytes;
-                return null;
+                Data.Position = 0;
+                using (StreamReader reader = new StreamReader(_HttpRequest.Body))
+                {
+                    return reader.ReadToEnd();
+                }
             }
         }
 
@@ -487,7 +482,7 @@
         #region Private-Members
 
         private string _Header = "[S3Request] ";
-        private HttpRequestBase _HttpRequest = null;
+        private HttpRequest _HttpRequest = null;
         private Action<string> _Logger = null;
         private List<string> _SignedHeaders = new List<string>();
 
@@ -542,11 +537,11 @@
         /// <returns>True if exists.</returns>
         public bool HeaderExists(string key)
         {
-            if (String.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
+            if (string.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
 
             if (_HttpRequest != null)
             {
-                return _HttpRequest.HeaderExists(key);
+                return _HttpRequest.Headers.ContainsKey(key);
             }
 
             return false;
@@ -559,11 +554,11 @@
         /// <returns>True if exists.</returns>
         public bool QuerystringExists(string key)
         {
-            if (String.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
+            if (string.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
 
             if (_HttpRequest != null)
             {
-                return _HttpRequest.QuerystringExists(key);
+                return _HttpRequest.Query.ContainsKey(key);
             }
 
             return false;
@@ -576,11 +571,11 @@
         /// <returns>Value.</returns>
         public string RetrieveHeaderValue(string key)
         {
-            if (String.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
+            if (string.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
 
             if (_HttpRequest != null)
             {
-                return _HttpRequest.RetrieveHeaderValue(key);
+                return _HttpRequest.Headers[key].ToString();
             }
 
             return null;
@@ -593,11 +588,11 @@
         /// <returns>Value.</returns>
         public string RetrieveQueryValue(string key)
         {
-            if (String.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
+            if (string.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
 
             if (_HttpRequest != null)
             {
-                return _HttpRequest.RetrieveQueryValue(key);
+                return _HttpRequest.Query[key].ToString();
             }
 
             return null;
@@ -607,9 +602,11 @@
         /// Read a chunk from the request body.
         /// </summary>
         /// <returns>Chunk.</returns>
-        public async Task<Chunk> ReadChunk()
+        public async Task<(IMemoryOwner<byte> buffer, int length)> ReadChunk()
         {
-            return await _HttpRequest.ReadChunk().ConfigureAwait(false);
+            var buffer = MemoryPool<byte>.Shared.Rent(8192);
+            var length = await _HttpRequest.Body.ReadAsync(buffer.Memory).ConfigureAwait(false);
+            return (buffer, length);
         }
 
         #endregion
@@ -622,22 +619,23 @@
 
             #region Initialize
 
-            Chunked = _HttpRequest.ChunkedTransfer;
+            Chunked = _HttpRequest.Headers.ContainsKey("Transfer-Encoding") && 
+                      _HttpRequest.Headers["Transfer-Encoding"].ToString().ToLower().Contains("chunked");
             Region = null;
-            Hostname = _HttpRequest.Destination.Hostname;
+            Hostname = _HttpRequest.Host.Host;
             RequestType = S3RequestType.Unknown;
             RequestStyle = S3RequestStyle.Unknown;
             Bucket = null;
             Key = null;
             Authorization = null;
             AccessKey = null;
-            Data = _HttpRequest.Data;
+            Data = _HttpRequest.Body;
 
             #endregion
 
             #region Set-Parameters-from-Querystring
 
-            if (_HttpRequest.Query.Elements != null && _HttpRequest.Query.Elements.Count > 0)
+            if (_HttpRequest.Query.Count > 0)
             {
                 AccessKey = RetrieveQueryValue("awsaccesskeyid");
                 ContinuationToken = RetrieveQueryValue("continuation-token");
@@ -651,11 +649,10 @@
 
                 if (QuerystringExists("max-keys"))
                 {
-                    int maxKeys = 0;
                     string maxKeysStr = RetrieveQueryValue("max-keys");
-                    if (!String.IsNullOrEmpty(maxKeysStr))
+                    if (!string.IsNullOrEmpty(maxKeysStr))
                     {
-                        if (Int32.TryParse(_HttpRequest.Query.Elements["max-keys"], out maxKeys))
+                        if (int.TryParse(maxKeysStr, out int maxKeys))
                         {
                             MaxKeys = maxKeys;
                         }
@@ -664,11 +661,10 @@
 
                 if (QuerystringExists("max-parts"))
                 {
-                    int maxParts = 0;
                     string maxPartsStr = RetrieveQueryValue("max-parts");
-                    if (!String.IsNullOrEmpty(maxPartsStr))
+                    if (!string.IsNullOrEmpty(maxPartsStr))
                     {
-                        if (Int32.TryParse(_HttpRequest.Query.Elements["max-parts"], out maxParts))
+                        if (int.TryParse(maxPartsStr, out int maxParts))
                         {
                             MaxParts = maxParts;
                         }
@@ -677,11 +673,10 @@
 
                 if (QuerystringExists("partnumber"))
                 {
-                    int partNum = 0;
                     string partNumStr = RetrieveQueryValue("partnumber");
-                    if (!String.IsNullOrEmpty(partNumStr))
+                    if (!string.IsNullOrEmpty(partNumStr))
                     {
-                        if (Int32.TryParse(_HttpRequest.Query.Elements["partnumber"], out partNum))
+                        if (int.TryParse(partNumStr, out int partNum))
                         {
                             PartNumber = partNum;
                         }
@@ -690,11 +685,10 @@
 
                 if (QuerystringExists("part-number-marker"))
                 {
-                    int partNumMarker = 0;
                     string partNumMarkerStr = RetrieveQueryValue("part-number-marker");
-                    if (!String.IsNullOrEmpty(partNumMarkerStr))
+                    if (!string.IsNullOrEmpty(partNumMarkerStr))
                     {
-                        if (Int32.TryParse(_HttpRequest.Query.Elements["part-number-marker"], out partNumMarker))
+                        if (int.TryParse(partNumMarkerStr, out int partNumMarker))
                         {
                             PartNumberMarker = partNumMarker;
                         }
@@ -706,7 +700,7 @@
 
             #region Set-Values-From-Headers
 
-            if (_HttpRequest.Headers != null && _HttpRequest.Headers.Count > 0)
+            if (_HttpRequest.Headers.Count > 0)
             {
                 if (HeaderExists("authorization"))
                 {
@@ -719,7 +713,7 @@
                 {
                     string rangeHeaderValue = RetrieveHeaderValue("range");
 
-                    if (!String.IsNullOrEmpty(rangeHeaderValue))
+                    if (!string.IsNullOrEmpty(rangeHeaderValue))
                     {
                         long? start = null;
                         long? end = null;
@@ -737,12 +731,11 @@
                 if (HeaderExists("x-amz-content-sha256"))
                 {
                     ContentSha256 = RetrieveHeaderValue("x-amz-content-sha256");
-                    if (!String.IsNullOrEmpty(ContentSha256))
+                    if (!string.IsNullOrEmpty(ContentSha256))
                     {
                         if (ContentSha256.ToLower().Contains("streaming"))
                         {
                             Chunked = true;
-                            _HttpRequest.ChunkedTransfer = true;
                         }
                     }
                 }
@@ -764,8 +757,8 @@
 
             #region Set-Region-Bucket-Style-and-Key
 
-            if (!String.IsNullOrEmpty(Hostname)
-                && !String.IsNullOrEmpty(_HttpRequest.Url.RawWithoutQuery))
+            if (!string.IsNullOrEmpty(Hostname)
+                && !string.IsNullOrEmpty(_HttpRequest.Path))
             {
                 ParseHostnameAndUrl();
             }
@@ -933,10 +926,10 @@
 
         private void ParseHostnameAndUrl()
         {
-            Uri uri = new Uri(_HttpRequest.Url.Full);
+            Uri uri = new Uri(_HttpRequest.GetEncodedUrl());
             Hostname = uri.Host;
 
-            _Logger?.Invoke(_Header + "parsing URL " + _HttpRequest.Url.Full);
+            _Logger?.Invoke(_Header + "parsing URL " + _HttpRequest.GetEncodedUrl());
 
             if (IsIpAddress(Hostname))
             {
@@ -976,8 +969,8 @@
                     }
                 }
             }
-
-            string rawUrl = _HttpRequest.Url.RawWithoutQuery;
+            
+            string rawUrl = _HttpRequest.Path.Value;
 
             while (rawUrl.StartsWith("/")) rawUrl = rawUrl.Substring(1);
 
@@ -996,8 +989,8 @@
 
             _Logger?.Invoke(_Header +
                 "parsed URL:" + Environment.NewLine +
-                "  Full URL      : " + _HttpRequest.Url.Full + Environment.NewLine +
-                "  Raw URL       : " + _HttpRequest.Url.RawWithoutQuery + Environment.NewLine +
+                "  Full URL      : " + _HttpRequest.GetEncodedUrl() + Environment.NewLine +
+                "  Raw URL       : " + _HttpRequest.Path.Value + Environment.NewLine +
                 "  Hostname      : " + Hostname + Environment.NewLine +
                 "  Base domain   : " + BaseDomain + Environment.NewLine +
                 "  Bucket name   : " + Bucket + Environment.NewLine +
@@ -1027,7 +1020,7 @@
         {
             switch (_HttpRequest.Method)
             {
-                case HttpMethod.HEAD:
+                case "HEAD":
                     #region HEAD
 
                     if (String.IsNullOrEmpty(Bucket) && String.IsNullOrEmpty(Key))
@@ -1040,7 +1033,7 @@
 
                 #endregion
 
-                case HttpMethod.GET:
+                case "GET":
                     #region GET
 
                     if (String.IsNullOrEmpty(Bucket) && String.IsNullOrEmpty(Key))
@@ -1089,7 +1082,7 @@
 
                 #endregion
 
-                case HttpMethod.PUT:
+                case "PUT":
                     #region PUT
 
                     if (!String.IsNullOrEmpty(Bucket) && String.IsNullOrEmpty(Key))
@@ -1126,7 +1119,7 @@
 
                 #endregion
 
-                case HttpMethod.POST:
+                case "POST":
                     #region POST
 
                     if (!String.IsNullOrEmpty(Bucket))
@@ -1152,7 +1145,7 @@
 
                 #endregion
 
-                case HttpMethod.DELETE:
+                case "DELETE":
                     #region DELETE
 
                     if (!String.IsNullOrEmpty(Bucket) && String.IsNullOrEmpty(Key))

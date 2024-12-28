@@ -1,600 +1,517 @@
-﻿namespace Test.Server
+﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using S3ServerLibrary;
+using S3ServerLibrary.S3Objects;
+using S3ServerLibrary.Callbacks;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace Test.Server;
+
+public class Program
 {
-    using System;
-    using System.Collections;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.Linq;
-    using System.Text;
-    using System.Threading;
-    using System.Threading.Tasks;
+    private static S3ServerSettings _Settings = new();
+    private static bool _ForcePathStyle = true;
+    private static bool _ValidateSignatures = false;
+    private static bool _DebugSignatures = true;
+    private static string _Location = "us-west-1";
+    private static string _SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    private static bool _RandomizeHeadResponses = false;
+    private static Random _Random = new(int.MaxValue);
 
-    using GetSomeInput;
-    using S3ServerLibrary;
-    using S3ServerLibrary.S3Objects;
-    using WatsonWebserver;
-    using WatsonWebserver.Core;
+    // Shared objects for responses
+    private static ObjectMetadata _ObjectMetadata =
+        new("hello.txt", DateTime.Now, "etag", 13, new Owner("admin", "Administrator"));
 
-    /*
-     * Note: This must be run as administrator if the S3Server constructor uses '*', '+', or '0.0.0.0' as the listener hostname.
-     *       Administrator not required if using 'localhost'.
-     *       S3 clients will report failed operation if interacting with this node; it returns a simple 200 to each request.
-     */
+    private static Owner _Owner = new("admin", "Administrator");
+    private static Grantee _Grantee = new("admin", "Administrator", null, "CanonicalUser", "admin@admin.com");
+    private static Tag _Tag = new("key", "value");
 
-    public static class Program
+    public static async Task Main(string[] args)
     {
-#pragma warning disable CS1998 // Async method lacks 'await' operators and will run synchronously
+        var builder = WebApplication.CreateBuilder(args);
 
-        static S3ServerSettings _Settings = new S3ServerSettings();
+        // Configure services
+        ConfigureServices(builder.Services);
 
-        static S3Server _Server = null;
-        static bool _RunForever = true;
-        static bool _ForcePathStyle = true;
-        static bool _ValidateSignatures = false;
-        static bool _DebugSignatures = true;
+        var app = builder.Build();
 
-        static string _Location = "us-west-1";
-        static ObjectMetadata _ObjectMetadata = new ObjectMetadata("hello.txt", DateTime.Now, "etag", 13, new Owner("admin", "Administrator"));
-        static Owner _Owner = new Owner("admin", "Administrator");
-        static Grantee _Grantee = new Grantee("admin", "Administrator", null, "CanonicalUser", "admin@admin.com");
-        static Tag _Tag = new Tag("key", "value");
+        // Configure middleware
+        ConfigureMiddleware(app);
 
-        static string _SecretKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+        // Start the application
+        await app.RunAsync();
+    }
 
-        static bool _RandomizeHeadResponses = false;
-        static Random _Random = new Random(Int32.MaxValue);
+    private static void ConfigureServices(IServiceCollection services)
+    {
+        // Configure S3 settings
+        _Settings.Logging.HttpRequests = false;
+        _Settings.Logging.S3Requests = false;
+        _Settings.Logger = Logger;
+        _Settings.EnableSignatures = _ValidateSignatures;
 
-        static void Main(string[] args)
+        if (_Settings.Logging.SignatureV4Validation && _DebugSignatures) _Settings.Logging.SignatureV4Validation = true;
+
+        // Register services
+        services.AddSingleton(_Settings);
+        services.AddSingleton(CreateServiceCallbacks());
+        services.AddSingleton(CreateBucketCallbacks());
+        services.AddSingleton(CreateObjectCallbacks());
+
+        // Add logging
+        services.AddLogging(logging =>
         {
-            /*
-            Console.Write("Base domain (.localhost): ");
-            string baseDomain = Console.ReadLine();
-            */
+            logging.AddConsole();
+            logging.SetMinimumLevel(LogLevel.Information);
+        });
+    }
 
-            Console.WriteLine("");
-            Console.WriteLine("This program must be run as administrator");
-            Console.WriteLine("");
+    private static void ConfigureMiddleware(WebApplication app)
+    {
+        app.UseS3Server();
 
-            _Settings.Webserver.Hostname = "localhost";
-            _Settings.Webserver.Port = 8000;
-            _Settings.Webserver.Ssl.Enable = false;
+        // Add a health check endpoint
+        app.MapGet("/health", () => "S3 Server is running!");
+    }
 
-            _Settings.Logging.HttpRequests = false;
-            _Settings.Logging.S3Requests = false;
-            _Settings.Logger = Logger;
-
-            _Settings.DefaultRequestHandler = DefaultRequestHandler;
-            _Settings.PreRequestHandler = PreRequestHandler;
-            _Settings.PostRequestHandler = PostRequestHandler;
-
-            _Server = new S3Server(_Settings);
-
-            if (!_ForcePathStyle)
-            {
-                _Server.Service.FindMatchingBaseDomain = FindMatchingBaseDomain;
-                Console.WriteLine("Server configured to use virtual hosting URLs; ensure client is configured accordingly");
-            }
-            else
-            {
-                Console.WriteLine("Server configured to use path-style URLs; ensure client is configured accordingly");
-            }
-
-            if (_ValidateSignatures)
-            {
-                _Server.Service.GetSecretKey = GetSecretKey;
-                _Server.Settings.EnableSignatures = true;
-
-                if (_DebugSignatures)
-                    _Server.Settings.Logging.SignatureV4Validation = true;
-            }
-
-            _Server.Service.ListBuckets = ListBuckets;
-            _Server.Service.ServiceExists = ServiceExists;
-            
-            _Server.Bucket.Delete = BucketDelete;
-            _Server.Bucket.DeleteTagging = BucketDeleteTags;
-            _Server.Bucket.DeleteWebsite = BucketDeleteWebsite;
-            _Server.Bucket.Exists = BucketExists;
-            _Server.Bucket.ReadVersioning = BucketReadVersioning;
-            _Server.Bucket.Read = BucketRead;
-            _Server.Bucket.ReadAcl = BucketReadAcl;
-            _Server.Bucket.ReadLocation = BucketReadLocation;
-            _Server.Bucket.ReadLogging = BucketReadLogging;
-            _Server.Bucket.ReadTagging = BucketReadTags;
-            _Server.Bucket.ReadVersioning = BucketReadVersioning;
-            _Server.Bucket.ReadVersions = BucketReadVersions;
-            _Server.Bucket.ReadWebsite = BucketReadWebsite;
-            _Server.Bucket.WriteVersioning = BucketWriteVersioning;
-            _Server.Bucket.Write = BucketWrite;
-            _Server.Bucket.WriteAcl = BucketWriteAcl;
-            _Server.Bucket.WriteLogging = BucketWriteLogging;
-            _Server.Bucket.WriteTagging = BucketWriteTags;
-            _Server.Bucket.WriteVersioning = BucketWriteVersioning;
-            _Server.Bucket.WriteWebsite = BucketWriteWebsite;
-
-            _Server.Object.Delete = ObjectDelete;
-            _Server.Object.DeleteMultiple = ObjectDeleteMultiple;
-            _Server.Object.DeleteTagging = ObjectDeleteTags;
-            _Server.Object.Exists = ObjectExists;
-            _Server.Object.Read = ObjectRead;
-            _Server.Object.ReadAcl = ObjectReadAcl;
-            _Server.Object.ReadLegalHold = ObjectReadLegalHold;
-            _Server.Object.ReadRetention = ObjectReadRetention;
-            _Server.Object.ReadRange = ObjectReadRange;
-            _Server.Object.ReadTagging = ObjectReadTags;
-            _Server.Object.Write = ObjectWrite;
-            _Server.Object.WriteAcl = ObjectWriteAcl;
-            _Server.Object.WriteLegalHold = ObjectWriteLegalHold;
-            _Server.Object.WriteRetention = ObjectWriteRetention;
-            _Server.Object.WriteTagging = ObjectWriteTags;
-
-            _Server.Start();
-            Console.WriteLine("Listening on http://" + _Settings.Webserver.Hostname + ":" + _Settings.Webserver.Port);
-
-            while (_RunForever)
-            {
-                string userInput = Inputty.GetString("Command [? for help]:", null, false);
-                switch (userInput)
-                {
-                    case "?":
-                        Menu();
-                        break;
-
-                    case "cls":
-                        Console.Clear();
-                        break;
-
-                    case "q":
-                        _RunForever = false;
-                        break;
-                }
-            }
-        }
-
-        private static string GetSecretKey(S3Context context)
+    private static ServiceCallbacks CreateServiceCallbacks()
+    {
+        return new ServiceCallbacks
         {
-            return _SecretKey;
-        }
+            GetSecretKey = GetSecretKey,
+            FindMatchingBaseDomain = _ForcePathStyle ? null : FindMatchingBaseDomain,
+            ListBuckets = ListBuckets,
+            ServiceExists = ServiceExists
+        };
+    }
 
-        static void Menu()
+    private static BucketCallbacks CreateBucketCallbacks()
+    {
+        return new BucketCallbacks
         {
-            Console.WriteLine("--- Available Commands ---");
-            Console.WriteLine("  ?         Help, this menu");
-            Console.WriteLine("  q         Quit the program");
-            Console.WriteLine("  cls       Clear the screen");
-        }
+            Delete = BucketDelete,
+            DeleteTagging = BucketDeleteTags,
+            DeleteWebsite = BucketDeleteWebsite,
+            Exists = BucketExists,
+            Read = BucketRead,
+            ReadAcl = BucketReadAcl,
+            ReadLocation = BucketReadLocation,
+            ReadLogging = BucketReadLogging,
+            ReadTagging = BucketReadTags,
+            ReadVersioning = BucketReadVersioning,
+            ReadVersions = BucketReadVersions,
+            ReadWebsite = BucketReadWebsite,
+            Write = BucketWrite,
+            WriteAcl = BucketWriteAcl,
+            WriteLogging = BucketWriteLogging,
+            WriteTagging = BucketWriteTags,
+            WriteVersioning = BucketWriteVersioning,
+            WriteWebsite = BucketWriteWebsite
+        };
+    }
 
-        #region S3-API-Handlers
-
-        #region Pre-Post-Default
-
-        static async Task<bool> PreRequestHandler(S3Context ctx)
+    private static ObjectCallbacks CreateObjectCallbacks()
+    {
+        return new ObjectCallbacks
         {
-            // Console.WriteLine(SerializationHelper.SerializeJson(ctx, true));
-            return false;
-        }
+            Delete = ObjectDelete,
+            DeleteMultiple = ObjectDeleteMultiple,
+            DeleteTagging = ObjectDeleteTags,
+            Exists = ObjectExists,
+            Read = ObjectRead,
+            ReadAcl = ObjectReadAcl,
+            ReadLegalHold = ObjectReadLegalHold,
+            ReadRetention = ObjectReadRetention,
+            ReadRange = ObjectReadRange,
+            ReadTagging = ObjectReadTags,
+            Write = ObjectWrite,
+            WriteAcl = ObjectWriteAcl,
+            WriteLegalHold = ObjectWriteLegalHold,
+            WriteRetention = ObjectWriteRetention,
+            WriteTagging = ObjectWriteTags
+        };
+    }
+    
+    private static string GetSecretKey(S3Context context) => _SecretKey;
 
-        static async Task DefaultRequestHandler(S3Context ctx)
+    private static string FindMatchingBaseDomain(string hostname)
+    {
+        if (string.IsNullOrEmpty(hostname)) throw new ArgumentNullException(nameof(hostname));
+
+        if (hostname.Equals("s3.local.gd")) return "s3.local.gd";
+        if (hostname.EndsWith(".s3.local.gd")) return "s3.local.gd";
+
+        throw new KeyNotFoundException($"A base domain could not be found for hostname '{hostname}'.");
+    }
+
+    private static async Task<ListAllMyBucketsResult> ListBuckets(S3Context ctx)
+    {
+        Logger("ListBuckets");
+
+        return new ListAllMyBucketsResult
         {
-            Console.WriteLine("DefaultRequestHandler " + ctx.Http.Request.Method.ToString() + " " + ctx.Http.Request.Url.RawWithoutQuery);
-            await ctx.Response.Send(ErrorCode.InvalidRequest);
-        }
-
-        static async Task PostRequestHandler(S3Context ctx)
-        {
-            Logger("Request complete: " + ctx.Http.Request.Method.ToString() + " " + ctx.Http.Request.Url.RawWithQuery + ": " + ctx.Response.StatusCode);
-        }
-
-        #endregion
-
-        #region Service-APIs
-
-        private static async Task<ListAllMyBucketsResult> ListBuckets(S3Context ctx)
-        {
-            Console.WriteLine("ListBuckets");
-
-            ListAllMyBucketsResult result = new ListAllMyBucketsResult();
-            result.Owner = new Owner("admin", "Administrator");
-
-            List<Bucket> buckets = new List<Bucket>()
+            Owner = new Owner("admin", "Administrator"),
+            Buckets = new Buckets(new List<Bucket>
             {
                 new Bucket("default", DateTime.Now)
-            };
+            })
+        };
+    }
 
-            result.Buckets = new Buckets(buckets);
-            return result;
-        }
+    private static async Task<string> ServiceExists(S3Context context) => "us-west-1";
 
-        private static async Task<string> ServiceExists(S3Context context)
-        {
-            return "us-west-1";
-        }
+    #region Bucket Operations
 
-        private static string FindMatchingBaseDomain(string hostname)
-        {
-            if (String.IsNullOrEmpty(hostname)) throw new ArgumentNullException(nameof(hostname));
+    private static async Task BucketDelete(S3Context ctx)
+    {
+        Logger($"BucketDelete: {ctx.Request.Bucket}");
+    }
 
-            List<string> matches = new List<string>();
+    private static async Task BucketDeleteTags(S3Context ctx)
+    {
+        Logger($"BucketDeleteTags: {ctx.Request.Bucket}");
+    }
 
-            if (hostname.Equals("s3.local.gd"))
+    private static async Task BucketDeleteWebsite(S3Context ctx)
+    {
+        Logger($"BucketDeleteWebsite: {ctx.Request.Bucket}");
+    }
+
+    private static async Task<bool> BucketExists(S3Context ctx)
+    {
+        Logger($"BucketExists: {ctx.Request.Bucket}");
+        return !_RandomizeHeadResponses || _Random.Next(100) % 2 == 0;
+    }
+
+    private static async Task<ListBucketResult> BucketRead(S3Context ctx)
+    {
+        Logger($"BucketRead: {ctx.Request.Bucket}");
+
+        return new ListBucketResult(
+            "default",
+            new List<ObjectMetadata> { _ObjectMetadata },
+            1,
+            ctx.Request.MaxKeys,
+            ctx.Request.Prefix,
+            ctx.Request.Marker,
+            ctx.Request.Delimiter,
+            false,
+            null,
+            null,
+            _Location);
+    }
+
+    private static async Task<AccessControlPolicy> BucketReadAcl(S3Context ctx)
+    {
+        Logger($"BucketReadAcl: {ctx.Request.Bucket}");
+
+        var acl = new AccessControlList(
+            new List<Grant>
             {
-                return "s3.local.gd";
-            }
-            else
-            {
-                if (hostname.EndsWith(".s3.local.gd")) matches.Add("s3.local.gd");
-            }
+                new Grant(_Grantee, PermissionEnum.FullControl)
+            });
 
-            if (matches.Count > 0)
-            {
-                return matches.Aggregate("", (max, cur) => max.Length > cur.Length ? max : cur);
-            }
+        return new AccessControlPolicy(_Owner, acl);
+    }
 
-            throw new KeyNotFoundException("A base domain could not be found for hostname '" + hostname + "'.");
-        }
+    private static async Task<LocationConstraint> BucketReadLocation(S3Context ctx)
+    {
+        Logger($"BucketReadLocation: {ctx.Request.Bucket}");
+        return new LocationConstraint(_Location);
+    }
 
-        #endregion
+    private static async Task<BucketLoggingStatus> BucketReadLogging(S3Context ctx)
+    {
+        Logger($"BucketReadLogging: {ctx.Request.Bucket}");
+        return new BucketLoggingStatus(
+            new LoggingEnabled("default", "prefix", new TargetGrants()));
+    }
 
-        #region Bucket-APIs
+    private static async Task<Tagging> BucketReadTags(S3Context ctx)
+    {
+        Logger($"BucketReadTags: {ctx.Request.Bucket}");
+        return new Tagging(
+            new TagSet(new List<Tag> { _Tag }));
+    }
 
-        static async Task BucketDelete(S3Context ctx)
+    private static async Task<VersioningConfiguration> BucketReadVersioning(S3Context ctx)
+    {
+        Logger($"BucketReadVersioning: {ctx.Request.Bucket}");
+        return new VersioningConfiguration(
+            VersioningStatusEnum.Enabled, 
+            MfaDeleteStatusEnum.Disabled);
+    }
+
+    private static async Task<ListVersionsResult> BucketReadVersions(S3Context ctx)
+    {
+        Logger($"BucketReadVersions: {ctx.Request.Bucket}");
+
+        var versions = new List<ObjectVersion>
         {
-            Console.WriteLine("BucketDelete: " + ctx.Request.Bucket);
-        }
+            new ObjectVersion(
+                "version1.key", 
+                "1", 
+                true, 
+                DateTime.UtcNow, 
+                "etag", 
+                500, 
+                _Owner)
+        };
 
-        static async Task BucketDeleteTags(S3Context ctx)
+        var deleteMarkers = new List<DeleteMarker>
         {
-            Console.WriteLine("BucketDeleteTags: " + ctx.Request.Bucket);
-        }
+            new DeleteMarker(
+                "deleted1.key", 
+                "2", 
+                true, 
+                DateTime.UtcNow, 
+                _Owner)
+        };
 
-        static async Task BucketDeleteWebsite(S3Context ctx)
+        return new ListVersionsResult(
+            "default",
+            versions,
+            deleteMarkers,
+            ctx.Request.MaxKeys,
+            ctx.Request.Prefix,
+            ctx.Request.Marker,
+            null,
+            false,
+            "us-west-1");
+    }
+
+    private static async Task<WebsiteConfiguration> BucketReadWebsite(S3Context ctx)
+    {
+        Logger($"BucketReadWebsite: {ctx.Request.Bucket}");
+
+        return new WebsiteConfiguration
         {
-            Console.WriteLine("BucketDeleteWebsite: " + ctx.Request.Bucket);
-        }
-
-        static async Task<bool> BucketExists(S3Context ctx)
-        {
-            Console.WriteLine("BucketExists: " + ctx.Request.Bucket);
-
-            if (!_RandomizeHeadResponses) return true;
-
-            int val = _Random.Next(100);
-            if (val % 2 == 0) return true;
-            else return false;
-        }
-
-        static async Task<ListBucketResult> BucketRead(S3Context ctx)
-        {
-            Console.WriteLine("BucketRead: " + ctx.Request.Bucket);
-
-            List<ObjectMetadata> contents = new List<ObjectMetadata>()
-            {
-                _ObjectMetadata
-            };
-
-            ListBucketResult result = new ListBucketResult(
-                "default",
-                contents,
-                1,
-                ctx.Request.MaxKeys,
-                ctx.Request.Prefix,
-                ctx.Request.Marker,
-                ctx.Request.Delimiter,
-                false,
-                null,
-                null,
-                _Location);
-
-            return result;
-        }
-
-        static async Task<AccessControlPolicy> BucketReadAcl(S3Context ctx)
-        {
-            Console.WriteLine("BucketReadAcl: " + ctx.Request.Bucket);
-
-            AccessControlList acl = new AccessControlList(
-                new List<Grant>()
+            ErrorDocument = new ErrorDocument("error.html"),
+            IndexDocument = new IndexDocument("index.html"),
+            RedirectAllRequestsTo = new RedirectAllRequestsTo("localhost", ProtocolEnum.Http),
+            RoutingRules = new RoutingRules(
+                new List<RoutingRule>
                 {
-                    new Grant(_Grantee, PermissionEnum.FullControl)
-                });
-
-            AccessControlPolicy policy = new AccessControlPolicy(
-                _Owner,
-                acl);
-
-            return policy;
-        }
-
-        static async Task<LocationConstraint> BucketReadLocation(S3Context ctx)
-        {
-            Console.WriteLine("BucketReadLocation: " + ctx.Request.Bucket);
-
-            return new LocationConstraint(_Location);
-        }
-
-        static async Task<BucketLoggingStatus> BucketReadLogging(S3Context ctx)
-        {
-            Console.WriteLine("BucketReadLogging: " + ctx.Request.Bucket);
-
-            BucketLoggingStatus status = new BucketLoggingStatus(new LoggingEnabled("default", "prefix", new TargetGrants()));
-            return status;
-        }
-
-        static async Task<Tagging> BucketReadTags(S3Context ctx)
-        {
-            Console.WriteLine("BucketReadTags: " + ctx.Request.Bucket);
-
-            Tagging tagging = new Tagging(new TagSet(new List<Tag> { _Tag }));
-
-            return tagging;
-        }
-
-        static async Task<VersioningConfiguration> BucketReadVersioning(S3Context ctx)
-        {
-            Console.WriteLine("BucketReadVersioning: " + ctx.Request.Bucket);
-
-            VersioningConfiguration vc = new VersioningConfiguration(VersioningStatusEnum.Enabled, MfaDeleteStatusEnum.Disabled);
-            return vc;
-        }
-
-        static async Task<ListVersionsResult> BucketReadVersions(S3Context ctx)
-        {
-            Console.WriteLine("BucketReadVersions: " + ctx.Request.Bucket);
-
-            List<ObjectVersion> versions = new List<ObjectVersion>()
-            {
-                new ObjectVersion("version1.key", "1", true, DateTime.UtcNow, "etag", 500, _Owner)
-            };
-
-            List<DeleteMarker> deleteMarkers = new List<DeleteMarker>()
-            {
-                new DeleteMarker("deleted1.key", "2", true, DateTime.UtcNow, _Owner)
-            };
-
-            List<VersionedEntity> entities = new List<VersionedEntity>();
-            entities.AddRange(deleteMarkers);
-            entities.AddRange(versions);
-
-            ListVersionsResult lvr = new ListVersionsResult(
-                "default", 
-                versions, 
-                deleteMarkers, 
-                ctx.Request.MaxKeys,
-                ctx.Request.Prefix,
-                ctx.Request.Marker,
-                null,
-                false,
-                "us-west-1");
-
-            return lvr;
-        }
-
-        static async Task<WebsiteConfiguration> BucketReadWebsite(S3Context ctx)
-        {
-            Console.WriteLine("BucketReadWebsite: " + ctx.Request.Bucket);
-
-            WebsiteConfiguration website = new WebsiteConfiguration();
-            website.ErrorDocument = new ErrorDocument("error.html");
-            website.IndexDocument = new IndexDocument("index.html");
-            website.RedirectAllRequestsTo = new RedirectAllRequestsTo("localhost", ProtocolEnum.Http);
-            website.RoutingRules = new RoutingRules(
-                new List<RoutingRule> {
-                    new RoutingRule(new Condition("400", "prefix"),
+                    new RoutingRule(
+                        new Condition("400", "prefix"),
                         new Redirect("localhost", 302, ProtocolEnum.Http, null, null))
-                }
-            );
-            return website;
-        }
+                })
+        };
+    }
 
-        static async Task BucketWriteVersioning(S3Context ctx, VersioningConfiguration ver)
-        {
-            Console.WriteLine("BucketWriteVersioning: " + ctx.Request.Bucket);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
-        }
+    private static async Task BucketWrite(S3Context ctx)
+    {
+        Logger($"BucketWrite: {ctx.Request.Bucket}");
+    }
 
-        static async Task BucketWrite(S3Context ctx)
-        {
-            Console.WriteLine("BucketWrite: " + ctx.Request.Bucket);
-        }
+    private static async Task BucketWriteAcl(S3Context ctx, AccessControlPolicy acp)
+    {
+        Logger($"BucketWriteAcl: {ctx.Request.Bucket}");
+        Logger(ctx.Request.DataAsString);
+    }
 
-        static async Task BucketWriteAcl(S3Context ctx, AccessControlPolicy acp)
-        {
-            Console.WriteLine("BucketWriteAcl: " + ctx.Request.Bucket);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
-        }
+    private static async Task BucketWriteLogging(S3Context ctx, BucketLoggingStatus logging)
+    {
+        Logger($"BucketWriteLogging: {ctx.Request.Bucket}");
+        Logger(ctx.Request.DataAsString);
+    }
 
-        static async Task BucketWriteLogging(S3Context ctx, BucketLoggingStatus logging)
-        {
-            Console.WriteLine("BucketWriteLogging: " + ctx.Request.Bucket);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
-        }
+    private static async Task BucketWriteTags(S3Context ctx, Tagging tags)
+    {
+        Logger($"BucketWriteTags: {ctx.Request.Bucket}");
+        Logger(ctx.Request.DataAsString);
+    }
 
-        static async Task BucketWriteWebsite(S3Context ctx, WebsiteConfiguration website)
-        {
-            Console.WriteLine("BucketWriteWebsite: " + ctx.Request.Bucket);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
-        }
+    private static async Task BucketWriteVersioning(S3Context ctx, VersioningConfiguration ver)
+    {
+        Logger($"BucketWriteVersioning: {ctx.Request.Bucket}");
+        Logger(ctx.Request.DataAsString);
+    }
 
-        static async Task BucketWriteTags(S3Context ctx, Tagging tags)
-        {
-            Console.WriteLine("BucketWriteTags: " + ctx.Request.Bucket);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
-        }
+    private static async Task BucketWriteWebsite(S3Context ctx, WebsiteConfiguration website)
+    {
+        Logger($"BucketWriteWebsite: {ctx.Request.Bucket}");
+        Logger(ctx.Request.DataAsString);
+    }
 
-        #endregion
+    #endregion
 
-        #region Object-APIs
+    #region Object Operations
 
-        static async Task ObjectDelete(S3Context ctx)
-        {
-            Console.WriteLine("ObjectDelete: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-        }
+    private static async Task ObjectDelete(S3Context ctx)
+    {
+        Logger($"ObjectDelete: {ctx.Request.Bucket}/{ctx.Request.Key}");
+    }
 
-        static async Task<DeleteResult> ObjectDeleteMultiple(S3Context ctx, DeleteMultiple del)
-        {
-            Console.WriteLine("ObjectDelete: " + ctx.Request.Bucket);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
+    private static async Task<DeleteResult> ObjectDeleteMultiple(S3Context ctx, DeleteMultiple del)
+    {
+        Logger($"ObjectDeleteMultiple: {ctx.Request.Bucket}");
+        Logger(ctx.Request.DataAsString);
 
-            DeleteResult result = new DeleteResult(
-                new List<Deleted>()
-                {
-                    new Deleted("hello.txt", "1", false)
-                },
-                null);
+        return new DeleteResult(
+            new List<Deleted> { new Deleted("hello.txt", "1", false) },
+            null);
+    }
 
-            return result;
-        }
+    private static async Task<ObjectMetadata> ObjectExists(S3Context ctx)
+    {
+        Logger($"ObjectExists: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        return !_RandomizeHeadResponses || _Random.Next(100) % 2 == 0 ? _ObjectMetadata : null;
+    }
 
-        static async Task ObjectDeleteTags(S3Context ctx)
-        {
-            Console.WriteLine("ObjectDeleteTags: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-        }
+    private static async Task<S3Object> ObjectRead(S3Context ctx)
+    {
+        Logger($"ObjectRead: {ctx.Request.Bucket}/{ctx.Request.Key}");
 
-        static async Task<ObjectMetadata> ObjectExists(S3Context ctx)
-        {
-            Console.WriteLine("ObjectExists: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
+        return new S3Object(
+            "hello.txt", 
+            "1", 
+            true, 
+            DateTime.Now, 
+            "etag", 
+            13, 
+            new Owner("admin", "Administrator"), 
+            "Hello, world!", 
+            "text/plain");
+    }
 
-            if (!_RandomizeHeadResponses) return _ObjectMetadata;
+    private static async Task ObjectDeleteTags(S3Context ctx)
+    {
+        Logger($"ObjectDeleteTags: {ctx.Request.Bucket}/{ctx.Request.Key}");
+    }
 
-            int val = _Random.Next(100);
-            if (val % 2 == 0) return _ObjectMetadata;
-            else return null;
-        }
+    private static async Task<AccessControlPolicy> ObjectReadAcl(S3Context ctx)
+    {
+        Logger($"ObjectReadAcl: {ctx.Request.Bucket}/{ctx.Request.Key}");
 
-        static async Task<S3Object> ObjectRead(S3Context ctx)
-        {
-            Console.WriteLine("ObjectRead: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-
-            return new S3Object("hello.txt", "1", true, DateTime.Now, "etag", 13, new Owner("admin", "Administrator"), "Hello, world!", "text/plain");
-        }
-
-        static async Task<AccessControlPolicy> ObjectReadAcl(S3Context ctx)
-        {
-            Console.WriteLine("ObjectReadAcl: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-
-            AccessControlList acl = new AccessControlList(
-                new List<Grant>()
-                {
-                    new Grant(_Grantee, PermissionEnum.FullControl)
-                });
-
-            AccessControlPolicy policy = new AccessControlPolicy(
-                _Owner,
-                acl);
-
-            return policy;
-        }
-
-        static async Task<LegalHold> ObjectReadLegalHold(S3Context ctx)
-        {
-            Console.WriteLine("ObjectReadLegalHold: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-
-            LegalHold legalHold = new LegalHold("OFF");
-
-            return legalHold;
-        }
-
-        static async Task<S3Object> ObjectReadRange(S3Context ctx)
-        {
-            Console.WriteLine("ObjectReadRange: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-
-            S3Object s3obj = new S3Object("hello.txt", "1", true, DateTime.Now, "etag", 13, new Owner("admin", "Administrator"), "Hello, world!", "text/plain");
-
-            string data = s3obj.DataString;
-            data = data.Substring((int)ctx.Request.RangeStart, (int)((int)ctx.Request.RangeEnd - (int)ctx.Request.RangeStart));
-            int len = data.Length;
-            s3obj.DataString = data;
-            s3obj.Size = len;
-            return s3obj;
-        }
-
-        static async Task<Retention> ObjectReadRetention(S3Context ctx)
-        {
-            Console.WriteLine("ObjectReadRetention: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-
-            Retention ret = new Retention(RetentionModeEnum.Governance, DateTime.Now.AddDays(100));
-            
-            return ret;
-        }
-
-        static async Task<Tagging> ObjectReadTags(S3Context ctx)
-        {
-            Console.WriteLine("ObjectReadTags: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-
-            Tagging tagging = new Tagging(new TagSet(new List<Tag> { _Tag }));
-
-            return tagging;
-        }
-
-        static async Task ObjectWrite(S3Context ctx)
-        {
-            Console.WriteLine("ObjectWrite      : " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-            Console.WriteLine("Content type     : " + ctx.Request.ContentType);
-            Console.WriteLine("Chunked transfer : " + ctx.Request.Chunked);
-
-            if (ctx.Request.Chunked)
+        var acl = new AccessControlList(
+            new List<Grant>
             {
-                while (true)
+                new Grant(_Grantee, PermissionEnum.FullControl)
+            });
+
+        return new AccessControlPolicy(_Owner, acl);
+    }
+
+    private static async Task<LegalHold> ObjectReadLegalHold(S3Context ctx)
+    {
+        Logger($"ObjectReadLegalHold: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        return new LegalHold("OFF");
+    }
+
+    private static async Task<S3Object> ObjectReadRange(S3Context ctx)
+    {
+        Logger($"ObjectReadRange: {ctx.Request.Bucket}/{ctx.Request.Key}");
+
+        var s3obj = new S3Object(
+            "hello.txt",
+            "1",
+            true,
+            DateTime.Now,
+            "etag",
+            13,
+            new Owner("admin", "Administrator"),
+            "Hello, world!",
+            "text/plain");
+
+        string data = s3obj.DataString;
+        data = data.Substring(
+            (int)ctx.Request.RangeStart,
+            (int)(ctx.Request.RangeEnd - ctx.Request.RangeStart));
+        
+        s3obj.DataString = data;
+        s3obj.Size = data.Length;
+        return s3obj;
+    }
+
+    private static async Task<Retention> ObjectReadRetention(S3Context ctx)
+    {
+        Logger($"ObjectReadRetention: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        return new Retention(
+            RetentionModeEnum.Governance,
+            DateTime.Now.AddDays(100));
+    }
+
+    private static async Task<Tagging> ObjectReadTags(S3Context ctx)
+    {
+        Logger($"ObjectReadTags: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        return new Tagging(
+            new TagSet(new List<Tag> { _Tag }));
+    }
+
+    private static async Task ObjectWrite(S3Context ctx)
+    {
+        Logger($"ObjectWrite: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        Logger($"Content type: {ctx.Request.ContentType}");
+        Logger($"Chunked transfer: {ctx.Request.Chunked}");
+
+        if (ctx.Request.Chunked)
+        {
+            while (true)
+            {
+                var chunk = await ctx.Request.ReadChunk();
+                using var buffer = chunk.buffer;
+                var chunkLength = chunk.length;
+                var chunkIsFinal = buffer.Memory.Length != chunkLength;
+                Logger(SerializationHelper.SerializeJson(chunk, true));
+                
+                if (chunkLength > 0)
                 {
-                    Chunk chunk = ctx.Request.ReadChunk().Result;
-                    Console.WriteLine(SerializationHelper.SerializeJson(chunk, true));
+                    Logger($"{chunkLength}/{chunkIsFinal}: {Encoding.UTF8.GetString(buffer.Memory.Span.Slice(0, chunkLength).ToArray())}");
+                }
 
-                    Console.Write(chunk.Length + ": ");
-
-                    if (chunk.Length > 0)
-                    {
-                        Console.WriteLine(chunk.Length + "/" + chunk.IsFinal + ": " + Encoding.UTF8.GetString(chunk.Data));
-                    }
-                    if (chunk.IsFinal)
-                    {
-                        Console.WriteLine("Final chunk encountered");
-                        break;
-                    }                    
+                if (chunkIsFinal)
+                {
+                    Logger("Final chunk encountered");
+                    break;
                 }
             }
-            else
-            {
-                Console.WriteLine(ctx.Request.ContentLength + ": " + ctx.Request.DataAsString);
-            }
         }
-
-        static async Task ObjectWriteAcl(S3Context ctx, AccessControlPolicy acp)
+        else
         {
-            Console.WriteLine("ObjectWriteAcl: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
+            Logger($"{ctx.Request.ContentLength}: {ctx.Request.DataAsString}");
         }
+    }
 
-        static async Task ObjectWriteLegalHold(S3Context ctx, LegalHold legalHold)
-        {
-            Console.WriteLine("ObjectWriteLegalHold: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
-        }
+    private static async Task ObjectWriteAcl(S3Context ctx, AccessControlPolicy acp)
+    {
+        Logger($"ObjectWriteAcl: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        Logger(ctx.Request.DataAsString);
+    }
 
-        static async Task ObjectWriteRetention(S3Context ctx, Retention retention)
-        {
-            Console.WriteLine("ObjectWriteRetention: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
-        }
+    private static async Task ObjectWriteLegalHold(S3Context ctx, LegalHold legalHold)
+    {
+        Logger($"ObjectWriteLegalHold: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        Logger(ctx.Request.DataAsString);
+    }
 
-        static async Task ObjectWriteTags(S3Context ctx, Tagging tags)
-        {
-            Console.WriteLine("ObjectWriteTags: " + ctx.Request.Bucket + "/" + ctx.Request.Key);
-            Console.WriteLine(ctx.Request.DataAsString + Environment.NewLine);
-        }
+    private static async Task ObjectWriteRetention(S3Context ctx, Retention retention)
+    {
+        Logger($"ObjectWriteRetention: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        Logger(ctx.Request.DataAsString);
+    }
 
-        #endregion
+    private static async Task ObjectWriteTags(S3Context ctx, Tagging tags)
+    {
+        Logger($"ObjectWriteTags: {ctx.Request.Bucket}/{ctx.Request.Key}");
+        Logger(ctx.Request.DataAsString);
+    }
+#endregion
 
-        #endregion
+    #region Misc
 
-        #region Misc
+    private static void Logger(string msg)
+    {
+        Console.WriteLine(msg);
+    }
 
-        private static void Logger(string msg)
-        {
-            Console.WriteLine(msg);
-        }
-
-        #endregion
+    #endregion
 
 #pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
-    }
 }

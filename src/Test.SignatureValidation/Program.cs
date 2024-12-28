@@ -505,7 +505,7 @@
             {
                 while (true)
                 {
-                    Chunk chunk = ctx.Request.ReadChunk().Result;
+                    var chunk = ctx.Request.ReadChunk().Result;
                     Console.WriteLine(SerializationHelper.SerializeJson(chunk, true));
 
                     Console.Write(chunk.Length + ": ");

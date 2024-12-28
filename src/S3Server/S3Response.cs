@@ -1,17 +1,18 @@
-﻿namespace S3ServerLibrary
+﻿using Microsoft.AspNetCore.Http;
+using System;
+using System.Collections.Specialized;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+
+namespace S3ServerLibrary
 {
     using S3ServerLibrary.S3Objects;
-    using System;
-    using System.Collections.Specialized;
-    using System.Globalization;
-    using System.IO;
-    using System.Text;
-    using System.Text.Json.Serialization;
-    using System.Threading.Tasks;
-    using WatsonWebserver.Core;
 
     /// <summary>
-    /// S3 response.
+    /// S3 response wrapper for ASP.NET Core HttpResponse.
     /// </summary>
     public class S3Response
     {
@@ -22,14 +23,8 @@
         /// </summary>
         public int StatusCode
         {
-            get
-            {
-                return _HttpResponse.StatusCode;
-            }
-            set
-            {
-                _HttpResponse.StatusCode = value;
-            }
+            get => _httpResponse.StatusCode;
+            set => _httpResponse.StatusCode = value;
         }
 
         /// <summary>
@@ -39,12 +34,23 @@
         {
             get
             {
-                return _HttpResponse.Headers;
+                var headers = new NameValueCollection(StringComparer.InvariantCultureIgnoreCase);
+                foreach (var header in _httpResponse.Headers)
+                {
+                    headers.Add(header.Key, header.Value.ToString());
+                }
+                return headers;
             }
             set
             {
-                if (value == null) _HttpResponse.Headers = new NameValueCollection(StringComparer.InvariantCultureIgnoreCase);
-                else _HttpResponse.Headers = value;
+                _httpResponse.Headers.Clear();
+                if (value != null)
+                {
+                    foreach (string key in value.Keys)
+                    {
+                        _httpResponse.Headers[key] = value[key];
+                    }
+                }
             }
         }
 
@@ -53,84 +59,74 @@
         /// </summary>
         public string ContentType
         {
-            get
-            {
-                return _HttpResponse.ContentType;
-            }
-            set
-            {
-                _HttpResponse.ContentType = value;
-            }
+            get => _httpResponse.ContentType;
+            set => _httpResponse.ContentType = value;
         }
 
         /// <summary>
-        /// The length of the data in the response stream.  This value must be set before assigning the stream.
+        /// The length of the data in the response stream.
         /// </summary>
         public long ContentLength
         {
-            get
-            {
-                return _HttpResponse.ContentLength;
-            }
+            get => _httpResponse.ContentLength ?? 0;
             set
             {
                 if (value < 0) throw new ArgumentException("Content length must be zero or greater.");
-                _HttpResponse.ContentLength = value;
+                _httpResponse.ContentLength = value;
             }
         }
 
         /// <summary>
         /// Enable or disable chunked transfer-encoding.
-        /// By default this parameter is set to the value of Chunked in the S3Request object.
-        /// If Chunked is false, use Send() APIs.
-        /// If Chunked is true, use SendChunk() or SendFinalChunk() APIs.
-        /// The Send(ErrorCode) API is valid for both conditions.
         /// </summary>
         public bool ChunkedTransfer
         {
-            get
-            {
-                return _HttpResponse.ChunkedTransfer;
-            }
+            get => string.Equals(_httpResponse.Headers["Transfer-Encoding"], "chunked", StringComparison.OrdinalIgnoreCase);
             set
             {
-                _HttpResponse.ChunkedTransfer = value;
+                if (value)
+                    _httpResponse.Headers["Transfer-Encoding"] = "chunked";
+                else
+                    _httpResponse.Headers.Remove("Transfer-Encoding");
             }
         }
 
         /// <summary>
-        /// The data to return to the requestor.  Set ContentLength before assigning the stream.
+        /// The response body stream.
         /// </summary>
         [JsonIgnore]
-        public Stream Data
-        {
-            get
-            {
-                return _HttpResponse.Data;
-            }
-        }
+        public Stream Data => _httpResponse.Body;
 
         /// <summary>
-        /// Data stream as a string.  Fully reads the data stream.
+        /// Data stream as a string. Fully reads the data stream.
         /// </summary>
         [JsonIgnore]
         public string DataAsString
         {
             get
             {
-                return _HttpResponse.DataAsString;
+                if (_httpResponse.Body.CanSeek)
+                    _httpResponse.Body.Seek(0, SeekOrigin.Begin);
+
+                using var reader = new StreamReader(_httpResponse.Body, Encoding.UTF8);
+                return reader.ReadToEnd();
             }
         }
 
         /// <summary>
-        /// Data stream as a byte array.  Fully reads the data stream.
+        /// Data stream as a byte array. Fully reads the data stream.
         /// </summary>
         [JsonIgnore]
         public byte[] DataAsBytes
         {
             get
             {
-                return _HttpResponse.DataAsBytes;
+                if (_httpResponse.Body.CanSeek)
+                    _httpResponse.Body.Seek(0, SeekOrigin.Begin);
+
+                using var memoryStream = new MemoryStream();
+                _httpResponse.Body.CopyTo(memoryStream);
+                return memoryStream.ToArray();
             }
         }
 
@@ -138,8 +134,8 @@
 
         #region Private-Members
 
-        private HttpResponseBase _HttpResponse = null;
-        private S3Request _S3Request = null;
+        private readonly HttpResponse _httpResponse;
+        private readonly S3Request _s3Request;
 
         #endregion
 
@@ -150,19 +146,18 @@
         /// </summary>
         public S3Response()
         {
-
         }
 
         /// <summary>
-        /// Instantiate the object without supplying a stream.  Useful for HEAD responses.
+        /// Instantiate the object without supplying a stream. Useful for HEAD responses.
         /// </summary>
         /// <param name="ctx">S3 context.</param>
         public S3Response(S3Context ctx)
         {
             if (ctx == null) throw new ArgumentNullException(nameof(ctx));
 
-            _HttpResponse = ctx.Http.Response;
-            _S3Request = ctx.Request;
+            _httpResponse = ctx.Http.Response;
+            _s3Request = ctx.Request;
         }
 
         #endregion
@@ -170,143 +165,116 @@
         #region Public-Methods
 
         /// <summary>
-        /// Send the response with no data to the requestor and close the connection.
+        /// Send the response with no data to the requestor.
         /// </summary>
         /// <returns>True if successful.</returns>
         public async Task<bool> Send()
         {
-            if (ChunkedTransfer) throw new IOException("Responses with chunked transfer-encoding enabled require use of SendChunk() and SendFinalChunk().");
-
-            if (ContentLength > 0) _HttpResponse.ContentLength = ContentLength;
+            if (ChunkedTransfer)
+                throw new IOException("Responses with chunked transfer-encoding enabled require use of SendChunk() and SendFinalChunk().");
 
             SetResponseHeaders();
-
-            return await _HttpResponse.Send().ConfigureAwait(false);
+            await _httpResponse.CompleteAsync();
+            return true;
         }
 
         /// <summary>
-        /// Send the response with the supplied data to the requestor and close the connection.
+        /// Send the response with the supplied data to the requestor.
         /// </summary>
-        /// <param name="data">Data.</param>
+        /// <param name="data">Data string.</param>
         /// <returns>True if successful.</returns>
         public async Task<bool> Send(string data)
         {
-            if (ChunkedTransfer) throw new IOException("Responses with chunked transfer-encoding enabled require use of SendChunk() and SendFinalChunk().");
+            if (ChunkedTransfer)
+                throw new IOException("Responses with chunked transfer-encoding enabled require use of SendChunk() and SendFinalChunk().");
 
-            byte[] bytes = Array.Empty<byte>();
-            if (!String.IsNullOrEmpty(data))
+            byte[] bytes = string.IsNullOrEmpty(data) ? Array.Empty<byte>() : Encoding.UTF8.GetBytes(data);
+            ContentLength = bytes.Length;
+            
+            SetResponseHeaders();
+            await _httpResponse.Body.WriteAsync(bytes, 0, bytes.Length);
+            await _httpResponse.CompleteAsync();
+            return true;
+        }
+
+        /// <summary>
+        /// Send the response with the supplied data to the requestor.
+        /// </summary>
+        /// <param name="data">Data bytes.</param>
+        /// <returns>True if successful.</returns>
+        public async Task<bool> Send(byte[] data)
+        {
+            if (ChunkedTransfer)
+                throw new IOException("Responses with chunked transfer-encoding enabled require use of SendChunk() and SendFinalChunk().");
+
+            if (data != null && data.Length > 0)
             {
-                bytes = Encoding.UTF8.GetBytes(data);
-                ContentLength = bytes.Length;
+                ContentLength = data.Length;
+                SetResponseHeaders();
+                await _httpResponse.Body.WriteAsync(data, 0, data.Length);
             }
             else
             {
                 ContentLength = 0;
+                SetResponseHeaders();
             }
 
-            SetResponseHeaders();
-
-            return await _HttpResponse.Send(bytes).ConfigureAwait(false);
+            await _httpResponse.CompleteAsync();
+            return true;
         }
 
         /// <summary>
-        /// Send the response with the supplied data to the requestor and close the connection.
-        /// </summary>
-        /// <param name="data">Data.</param>
-        /// <returns>True if successful.</returns>
-        public async Task<bool> Send(byte[] data)
-        {
-            if (ChunkedTransfer) throw new IOException("Responses with chunked transfer-encoding enabled require use of SendChunk() and SendFinalChunk().");
-
-            MemoryStream ms = null;
-            ContentLength = 0;
-
-            if (data != null && data.Length > 0)
-            {
-                ms = new MemoryStream();
-                ms.Write(data, 0, data.Length);
-                ContentLength = data.Length;
-            }
-            else
-            {
-                ms = new MemoryStream(Array.Empty<byte>());
-            }
-
-            ms.Seek(0, SeekOrigin.Begin);
-
-            SetResponseHeaders();
-
-            return await _HttpResponse.Send(ContentLength, ms).ConfigureAwait(false);
-        }
-
-        /// <summary>
-        /// Send the response with the supplied stream to the requestor and close the connection.
+        /// Send the response with the supplied stream to the requestor.
         /// </summary>
         /// <param name="contentLength">Content length.</param>
         /// <param name="stream">Stream containing data.</param>
         /// <returns>True if successful.</returns>
         public async Task<bool> Send(long contentLength, Stream stream)
         {
-            if (ChunkedTransfer) throw new IOException("Responses with chunked transfer-encoding enabled require use of SendChunk() and SendFinalChunk().");
+            if (ChunkedTransfer)
+                throw new IOException("Responses with chunked transfer-encoding enabled require use of SendChunk() and SendFinalChunk().");
 
             ContentLength = contentLength;
-
             SetResponseHeaders();
 
             if (stream != null && ContentLength > 0)
             {
-                return await _HttpResponse.Send(ContentLength, stream).ConfigureAwait(false);
+                await stream.CopyToAsync(_httpResponse.Body);
             }
-            else
-            {
-                return await _HttpResponse.Send().ConfigureAwait(false);
-            }
+
+            await _httpResponse.CompleteAsync();
+            return true;
         }
 
         /// <summary>
-        /// Send an error response to the requestor and close the connection.
+        /// Send an error response to the requestor.
         /// </summary>
-        /// <param name="error">Error.</param>
+        /// <param name="error">Error object.</param>
         /// <returns>True if successful.</returns>
         public async Task<bool> Send(Error error)
         {
             ChunkedTransfer = false;
 
             byte[] bytes = Encoding.UTF8.GetBytes(SerializationHelper.SerializeXml(error));
-            MemoryStream ms = new MemoryStream(bytes);
-            ms.Seek(0, SeekOrigin.Begin);
-
             ContentLength = bytes.Length;
             StatusCode = error.HttpStatusCode;
             ContentType = Constants.ContentTypeXml;
 
             SetResponseHeaders();
-
-            return await _HttpResponse.Send(ContentLength, ms).ConfigureAwait(false);
+            await _httpResponse.Body.WriteAsync(bytes, 0, bytes.Length);
+            await _httpResponse.CompleteAsync();
+            return true;
         }
 
         /// <summary>
-        /// Send an error response to the requestor and close the connection.
+        /// Send an error response to the requestor.
         /// </summary>
         /// <param name="error">ErrorCode.</param>
         /// <returns>True if successful.</returns>
         public async Task<bool> Send(ErrorCode error)
         {
-            ChunkedTransfer = false;
-
-            Error errorBody = new Error(error);
-
-            byte[] bytes = Encoding.UTF8.GetBytes(SerializationHelper.SerializeXml(errorBody));
-            MemoryStream ms = new MemoryStream(bytes);
-            ms.Seek(0, SeekOrigin.Begin);
-
-            ContentLength = bytes.Length;
-            StatusCode = errorBody.HttpStatusCode;
-            ContentType = Constants.ContentTypeXml;
-
-            SetResponseHeaders();
-
-            return await _HttpResponse.Send(ContentLength, ms).ConfigureAwait(false);
+            var errorBody = new Error(error);
+            return await Send(errorBody);
         }
 
         /// <summary>
@@ -317,12 +285,27 @@
         /// <returns>True if successful.</returns>
         public async Task<bool> SendChunk(byte[] data, bool isFinal)
         {
-            if (!ChunkedTransfer) throw new IOException("Responses with chunked transfer-encoding disabled require use of Send().");
+            if (!ChunkedTransfer)
+                throw new IOException("Responses with chunked transfer-encoding disabled require use of Send().");
 
             SetResponseHeaders();
 
-            if (data == null) data = Array.Empty<byte>();
-            return await _HttpResponse.SendChunk(data, isFinal).ConfigureAwait(false);
+            if (data != null && data.Length > 0)
+            {
+                var chunkSize = data.Length.ToString("X", CultureInfo.InvariantCulture);
+                var chunkHeader = Encoding.ASCII.GetBytes($"{chunkSize}\r\n");
+                await _httpResponse.Body.WriteAsync(chunkHeader, 0, chunkHeader.Length);
+                await _httpResponse.Body.WriteAsync(data, 0, data.Length);
+                await _httpResponse.Body.WriteAsync(Encoding.ASCII.GetBytes("\r\n"), 0, 2);
+            }
+
+            if (isFinal)
+            {
+                await _httpResponse.Body.WriteAsync(Encoding.ASCII.GetBytes("0\r\n\r\n"), 0, 5);
+                await _httpResponse.CompleteAsync();
+            }
+
+            return true;
         }
 
         #endregion
@@ -331,20 +314,17 @@
 
         private void SetResponseHeaders()
         {
-            if (Headers == null) Headers = new NameValueCollection(StringComparer.InvariantCultureIgnoreCase);
+            if (!_httpResponse.Headers.ContainsKey("X-Amz-Date"))
+                _httpResponse.Headers.Append("X-Amz-Date", DateTime.UtcNow.ToString(Constants.AmazonTimestampFormatVerbose, CultureInfo.InvariantCulture));
 
-            if (Headers.Get("X-Amz-Date") == null)
-                Headers.Add("X-Amz-Date", DateTime.UtcNow.ToString(Constants.AmazonTimestampFormatVerbose, CultureInfo.InvariantCulture));
+            if (!_httpResponse.Headers.ContainsKey("Host"))
+                _httpResponse.Headers.Append("Host", _s3Request.Hostname);
 
-            if (Headers.Get("Host") == null)
-                Headers.Add("Host", _S3Request.Hostname);
+            if (!_httpResponse.Headers.ContainsKey("Server"))
+                _httpResponse.Headers.Append("Server", "S3Server");
 
-            if (Headers.Get("Server") == null)
-                Headers.Add("Server", "S3Server");
-
-            if (Headers.Get("Date") != null) Headers.Remove("Date");
-
-            Headers.Add("Date", DateTime.UtcNow.ToString(Constants.AmazonTimestampFormatVerbose, CultureInfo.InvariantCulture));
+            _httpResponse.Headers.Remove("Date");
+            _httpResponse.Headers.Append("Date", DateTime.UtcNow.ToString(Constants.AmazonTimestampFormatVerbose, CultureInfo.InvariantCulture));
         }
 
         #endregion

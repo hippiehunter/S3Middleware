@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFrameworks>net6.0;net8.0</TargetFrameworks>
+		<TargetFrameworks>net8.0</TargetFrameworks>
 		<Version>6.0.19</Version>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<GeneratePackageOnBuild>true</GeneratePackageOnBuild>
@@ -27,7 +27,7 @@
 	<ItemGroup>
 		<PackageReference Include="AWSSignatureGenerator" Version="1.0.8" />
 		<PackageReference Include="PrettyId" Version="1.0.2" />
-		<PackageReference Include="Watson" Version="6.3.0" />
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
 	</ItemGroup>
 
 	<ItemGroup>

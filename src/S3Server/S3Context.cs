@@ -1,9 +1,9 @@
-﻿namespace S3ServerLibrary
+﻿using Microsoft.AspNetCore.Http;
+
+namespace S3ServerLibrary
 {
     using System;
     using System.Text.Json.Serialization;
-    using Timestamps;
-    using WatsonWebserver.Core;
 
     /// <summary>
     /// S3 context.
@@ -15,7 +15,7 @@
         /// <summary>
         /// Time information for start, end, and total runtime.
         /// </summary>
-        public Timestamp Timestamp { get; set; } = new Timestamp();
+        public DateTime Timestamp { get; set; } = new DateTime();
 
         /// <summary>
         /// S3 request.
@@ -47,7 +47,7 @@
         /// HTTP context from which the S3 context was created.
         /// </summary>
         [JsonPropertyOrder(999)]
-        public HttpContextBase Http { get; private set; } = null;
+        public HttpContext Http { get; private set; } = null;
 
         #endregion
 
@@ -74,7 +74,7 @@
         /// <param name="baseDomainFinder">Callback to invoke to find a base domain for a given hostname, used with virtual hosted style URLs.</param> 
         /// <param name="metadata">User metadata, provided by your application.</param>
         /// <param name="logger">Method to invoke to send log messages.</param>
-        public S3Context(HttpContextBase ctx, Func<string, string> baseDomainFinder = null, object metadata = null, Action<string> logger = null)
+        public S3Context(HttpContext ctx, Func<string, string> baseDomainFinder = null, object metadata = null, Action<string> logger = null)
         {
             if (ctx == null) throw new ArgumentNullException(nameof(ctx));
 
@@ -93,17 +93,7 @@
         /// </summary>
         public void Dispose()
         {
-            if (Http.Request.Data != null)
-            {
-                Http.Request.Data.Dispose();
-                Http.Request.Data.Close();
-            }
 
-            if (Http.Response.Data != null)
-            {
-                Http.Response.Data.Dispose();
-                Http.Response.Data.Close();
-            }
         }
 
         #endregion
