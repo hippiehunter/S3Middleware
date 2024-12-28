@@ -4,7 +4,7 @@
 
 Simple S3 server-side interface, produced using Amazon's public documentation.  Want a simple S3 storage server built using S3Server?  Check out [Less3](https://github.com/jchristn/less3).
 
-[![NuGet Version](https://img.shields.io/nuget/v/S3Server.svg?style=flat)](https://www.nuget.org/packages/S3Server/) [![NuGet](https://img.shields.io/nuget/dt/S3Server.svg)](https://www.nuget.org/packages/S3Server) 
+Forked from [jchristn/s3server](https://github.com/jchristn/S3Server) to switch the hosting model to asp.net core middleware.
 
 ## Feedback and Enhancements
 
