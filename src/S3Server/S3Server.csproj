@@ -11,17 +11,16 @@
 		<PackageReleaseNotes>Dependency update and change to base domains.</PackageReleaseNotes>
 		<PackageTags>aws s3 storage rest interface server less3 minio ceph view</PackageTags>
 		<PackageLicenseUrl></PackageLicenseUrl>
-		<PackageProjectUrl>https://github.com/jchristn/S3Server</PackageProjectUrl>
-		<RepositoryUrl>https://github.com/jchristn/S3Server</RepositoryUrl>
 		<RepositoryType>Github</RepositoryType>
 		<PackageIconUrl></PackageIconUrl>
-		<PackageIcon>logo.png</PackageIcon>
 		<PackageId>S3Server</PackageId>
 		<RootNamespace>S3ServerLibrary</RootNamespace>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<PackageLicenseFile>LICENSE.md</PackageLicenseFile>
 		<IncludeSymbols>True</IncludeSymbols>
 		<SymbolPackageFormat>snupkg</SymbolPackageFormat>
+		<GenerateResourceUsePreserializedResources>true</GenerateResourceUsePreserializedResources>
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -31,34 +30,22 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<None Include="..\..\LICENSE.md">
+			
+		<None Include="../../LICENSE.md">
 		  <Pack>True</Pack>
 		  <PackagePath>\</PackagePath>
 		</None>
-		<None Include="..\..\README.md">
+		<None Include="../../README.md">
 		  <Pack>True</Pack>
 		  <PackagePath>\</PackagePath>
-		</None>
-		<None Include="assets\logo.png">
-			<Pack>True</Pack>
-			<PackagePath></PackagePath>
 		</None>
 	</ItemGroup>
 
 	<ItemGroup>
-		<None Include="Assets\logo.ico">
+		<None Include="../../LICENSE.md">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
-		<None Include="Assets\logo.png">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Include="S3Server.xml">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Include="..\..\LICENSE.md">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
-		<None Include="..\..\README.md">
+		<None Include="../../README.md">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>

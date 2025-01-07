@@ -118,31 +118,142 @@ namespace S3ServerLibrary
         }
 
         private async Task ProcessS3Request(HttpContext context, S3Context s3ctx)
-        {
-            switch (s3ctx.Request.RequestType)
+{
+    switch (s3ctx.Request.RequestType)
+    {
+        case S3RequestType.ServiceExists:
+            await HandleServiceExists(context, s3ctx);
+            break;
+
+        case S3RequestType.ListBuckets:
+            await HandleListBuckets(context, s3ctx);
+            break;
+
+        case S3RequestType.BucketExists:
+            if (_bucketCallbacks.Exists != null)
             {
-                case S3RequestType.ServiceExists:
-                    await HandleServiceExists(context, s3ctx);
-                    break;
-
-                case S3RequestType.ListBuckets:
-                    await HandleListBuckets(context, s3ctx);
-                    break;
-
-                // Add other case handlers here...
-                
-                default:
-                    if (_settings.DefaultRequestHandler != null)
-                    {
-                        await _settings.DefaultRequestHandler(s3ctx);
-                    }
-                    else
-                    {
-                        await SendErrorResponse(context, ErrorCode.InvalidRequest);
-                    }
-                    break;
+                bool exists = await _bucketCallbacks.Exists(s3ctx);
+                context.Response.StatusCode = exists ? StatusCodes.Status200OK : StatusCodes.Status404NotFound;
+                await SendResponse(context, s3ctx.Response);
             }
-        }
+            break;
+
+        case S3RequestType.BucketRead:
+            if (_bucketCallbacks.Read != null)
+            {
+                var result = await _bucketCallbacks.Read(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = Constants.ContentTypeXml;
+                await SendXmlResponse(context, result);
+            }
+            break;
+
+        case S3RequestType.BucketWrite:
+            if (_bucketCallbacks.Write != null)
+            {
+                await _bucketCallbacks.Write(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                await SendResponse(context, s3ctx.Response);
+            }
+            break;
+
+        case S3RequestType.BucketDelete:
+            if (_bucketCallbacks.Delete != null)
+            {
+                await _bucketCallbacks.Delete(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status204NoContent;
+                await SendResponse(context, s3ctx.Response);
+            }
+            break;
+
+        case S3RequestType.ObjectExists:
+            if (_objectCallbacks.Exists != null)
+            {
+                var metadata = await _objectCallbacks.Exists(s3ctx);
+                context.Response.StatusCode = metadata != null ? StatusCodes.Status200OK : StatusCodes.Status404NotFound;
+                await SendResponse(context, s3ctx.Response);
+            }
+            break;
+
+        case S3RequestType.ObjectRead:
+            if (_objectCallbacks.Read != null)
+            {
+                var obj = await _objectCallbacks.Read(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = obj.ContentType;
+                await SendResponse(context, s3ctx.Response);
+            }
+            break;
+
+        case S3RequestType.ObjectWrite:
+            if (_objectCallbacks.Write != null)
+            {
+                await _objectCallbacks.Write(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                await SendResponse(context, s3ctx.Response);
+            }
+            break;
+
+        case S3RequestType.ObjectDelete:
+            if (_objectCallbacks.Delete != null)
+            {
+                await _objectCallbacks.Delete(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status204NoContent;
+                await SendResponse(context, s3ctx.Response);
+            }
+            break;
+
+        case S3RequestType.ObjectCreateMultipartUpload:
+            if (_objectCallbacks.CreateMultipartUpload != null)
+            {
+                var result = await _objectCallbacks.CreateMultipartUpload(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = Constants.ContentTypeXml;
+                await SendXmlResponse(context, result);
+            }
+            break;
+
+        case S3RequestType.ObjectUploadPart:
+            if (_objectCallbacks.UploadPart != null)
+            {
+                await _objectCallbacks.UploadPart(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                await SendResponse(context, s3ctx.Response);
+            }
+            break;
+
+        case S3RequestType.ObjectCompleteMultipartUpload:
+            if (_objectCallbacks.CompleteMultipartUpload != null)
+            {
+                var completeRequest = SerializationHelper.DeserializeXml<CompleteMultipartUpload>(s3ctx.Request.DataAsString);
+                var result = await _objectCallbacks.CompleteMultipartUpload(s3ctx, completeRequest);
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = Constants.ContentTypeXml;
+                await SendXmlResponse(context, result);
+            }
+            break;
+
+        case S3RequestType.ObjectAbortMultipartUpload:
+            if (_objectCallbacks.AbortMultipartUpload != null)
+            {
+                await _objectCallbacks.AbortMultipartUpload(s3ctx);
+                context.Response.StatusCode = StatusCodes.Status204NoContent;
+                await SendResponse(context, s3ctx.Response);
+            }
+            break;
+
+        default:
+            if (_settings.DefaultRequestHandler != null)
+            {
+                await _settings.DefaultRequestHandler(s3ctx);
+            }
+            else
+            {
+                await SendErrorResponse(context, ErrorCode.InvalidRequest);
+            }
+            break;
+    }
+}
 
         private async Task HandleServiceExists(HttpContext context, S3Context s3ctx)
         {
