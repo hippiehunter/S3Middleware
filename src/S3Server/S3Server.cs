@@ -225,7 +225,7 @@ namespace S3ServerLibrary
         case S3RequestType.ObjectCompleteMultipartUpload:
             if (_objectCallbacks.CompleteMultipartUpload != null)
             {
-                var completeRequest = SerializationHelper.DeserializeXml<CompleteMultipartUpload>(s3ctx.Request.DataAsString);
+                var completeRequest = SerializationHelper.DeserializeXml<CompleteMultipartUpload>(await new StreamReader(s3ctx.Request.Data).ReadToEndAsync());
                 var result = await _objectCallbacks.CompleteMultipartUpload(s3ctx, completeRequest);
                 context.Response.StatusCode = StatusCodes.Status200OK;
                 context.Response.ContentType = Constants.ContentTypeXml;

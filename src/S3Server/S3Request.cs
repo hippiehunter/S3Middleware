@@ -467,9 +467,7 @@ namespace S3ServerLibrary
             get
             {
                 if (Data == null) return null;
-                if (Data.Length < 1) return null;
 
-                Data.Position = 0;
                 using (StreamReader reader = new StreamReader(_HttpRequest.Body))
                 {
                     return reader.ReadToEnd();

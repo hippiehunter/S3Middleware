@@ -58,6 +58,11 @@
             if (String.IsNullOrEmpty(bucket)) throw new ArgumentNullException(nameof(bucket));
             if (String.IsNullOrEmpty(key)) throw new ArgumentNullException(nameof(key));
             if (String.IsNullOrEmpty(uploadId)) throw new ArgumentNullException(nameof(uploadId));
+
+            Bucket = bucket;
+            Key = key;
+            UploadId = uploadId;
+
         }
 
         #endregion
