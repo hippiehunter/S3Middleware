@@ -171,6 +171,8 @@ namespace S3ServerLibrary
             {
                 var metadata = await _objectCallbacks.Exists(s3ctx);
                 context.Response.StatusCode = metadata != null ? StatusCodes.Status200OK : StatusCodes.Status404NotFound;
+                if(metadata != null)
+                    context.Response.Headers.Append("Size", metadata.Size.ToString());
                 await SendResponse(context, s3ctx.Response);
             }
             break;
