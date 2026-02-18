@@ -1,4 +1,4 @@
-﻿namespace S3ServerLibrary
+namespace S3ServerLibrary
 {
     using System;
     using System.Collections.Specialized;
@@ -200,16 +200,22 @@
 
         private class ExceptionConverter<TExceptionType> : JsonConverter<TExceptionType>
         {
+            /// <summary>
+            /// </summary>
             public override bool CanConvert(Type typeToConvert)
             {
                 return typeof(Exception).IsAssignableFrom(typeToConvert);
             }
 
+            /// <summary>
+            /// </summary>
             public override TExceptionType Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
             {
                 throw new NotSupportedException("Deserializing exceptions is not allowed");
             }
 
+            /// <summary>
+            /// </summary>
             public override void Write(Utf8JsonWriter writer, TExceptionType value, JsonSerializerOptions options)
             {
                 var serializableProperties = value.GetType()
@@ -247,8 +253,12 @@
 
         private class NameValueCollectionConverter : JsonConverter<NameValueCollection>
         {
+            /// <summary>
+            /// </summary>
             public override NameValueCollection Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => throw new NotImplementedException();
 
+            /// <summary>
+            /// </summary>
             public override void Write(Utf8JsonWriter writer, NameValueCollection value, JsonSerializerOptions options)
             {
                 var val = value.Keys.Cast<string>()

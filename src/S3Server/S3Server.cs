@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using System;
@@ -15,6 +15,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace S3ServerLibrary
 {
+    /// <summary>
+    /// </summary>
     public class S3RequestHandler
     {
         private readonly RequestDelegate _next;
@@ -26,6 +28,8 @@ namespace S3ServerLibrary
         private readonly BucketCallbacks _bucketCallbacks;
         private readonly ObjectCallbacks _objectCallbacks;
 
+        /// <summary>
+        /// </summary>
         public S3RequestHandler(
             RequestDelegate next,
             ILogger<S3RequestHandler> logger,
@@ -42,6 +46,8 @@ namespace S3ServerLibrary
             _objectCallbacks = objectCallbacks ?? throw new ArgumentNullException(nameof(objectCallbacks));
         }
 
+        /// <summary>
+        /// </summary>
         public async Task InvokeAsync(HttpContext context)
         {
             S3Context s3ctx = null;
@@ -444,8 +450,12 @@ namespace S3ServerLibrary
     }
 
     // Extension method for easy middleware registration
+    /// <summary>
+    /// </summary>
     public static class S3RequestHandlerExtensions
     {
+        /// <summary>
+        /// </summary>
         public static IApplicationBuilder UseS3Server(this IApplicationBuilder builder)
         {
             return builder.UseMiddleware<S3RequestHandler>();
